@@ -217,6 +217,9 @@ o	Metrics/Logger/AuditTrail registran todo.
 3.	App.shutdown() ante parada manual, error crítico o KillSwitch.
 ________________________________________
 Notas de diseño
+
+![License: Personal Non-Commercial](https://img.shields.io/badge/license-personal_non_commercial-informational)
+
 •	Extensibilidad: nuevas estrategias heredan de StrategyBase, sin tocar núcleo.
 •	Seguridad: SecretsManager, límites en RiskManager, KillSwitch.
 •	Reusabilidad: BrokerAdapter desacopla MT5/IB; cambiar broker no rompe estrategias.
