@@ -25,10 +25,16 @@ logger = logging.getLogger(__name__)
 
 
 class FakeBroker:
-    """Broker simulado para ejecutar el ejemplo sin conexiones reales."""
+    """Broker simulado para ejecutar el ejemplo sin conexiones reales.
+    
+    Mantiene el estado de posiciones abiertas para evitar abrir infinitas órdenes
+    en el mismo símbolo/estrategia.
+    """
 
     def __init__(self) -> None:
         self.orders_sent: list = []
+        self.open_positions: list = []
+        self.closed_trades: list = []
 
     def connect(self) -> None:
         logger.info("Simulando conexión a broker")
@@ -47,17 +53,79 @@ class FakeBroker:
         return df
 
     def send_market_order(self, order_request):
+        from bot_trading.domain.entities import OrderResult, Position, TradeRecord
+        
         self.orders_sent.append(order_request)
-        logger.info("Orden simulada enviada: %s", order_request)
-        from bot_trading.domain.entities import OrderResult
+        order_id = len(self.orders_sent)
+        logger.info("Orden simulada enviada: %s (ID: %d, Magic: %s)", 
+                   order_request, order_id, order_request.magic_number)
+        
+        # Simular apertura o cierre de posiciones
+        if order_request.order_type in {"BUY", "SELL"}:
+            # Crear una posición abierta simulada
+            position = Position(
+                symbol=order_request.symbol,
+                volume=order_request.volume,
+                entry_price=1.0,  # Precio simulado
+                stop_loss=order_request.stop_loss,
+                take_profit=order_request.take_profit,
+                strategy_name=order_request.comment or "unknown",
+                open_time=datetime.now(timezone.utc),
+                magic_number=order_request.magic_number
+            )
+            self.open_positions.append(position)
+            logger.info("Posición simulada abierta: %s %s (Magic: %s)", 
+                       order_request.order_type, order_request.symbol, order_request.magic_number)
+        
+        elif order_request.order_type == "CLOSE":
+            # Cerrar posiciones del símbolo y magic number especificados
+            # Si tiene magic_number, solo cerrar las de esa estrategia (método robusto)
+            if order_request.magic_number is not None:
+                positions_to_close = [
+                    p for p in self.open_positions 
+                    if p.symbol == order_request.symbol and p.magic_number == order_request.magic_number
+                ]
+                if not positions_to_close:
+                    logger.warning(
+                        "No se encontraron posiciones abiertas para cerrar: %s (Magic: %s)",
+                        order_request.symbol, order_request.magic_number
+                    )
+            else:
+                # Fallback: cerrar todas las posiciones del símbolo
+                positions_to_close = [p for p in self.open_positions if p.symbol == order_request.symbol]
+                logger.debug("Cerrando todas las posiciones de %s (sin Magic Number especificado)", order_request.symbol)
+            
+            # Cerrar posiciones y crear registros de trades cerrados
+            for pos in positions_to_close:
+                self.open_positions.remove(pos)
+                
+                # Crear registro de trade cerrado
+                trade_record = TradeRecord(
+                    symbol=pos.symbol,
+                    strategy_name=pos.strategy_name,
+                    entry_time=pos.open_time,
+                    exit_time=datetime.now(timezone.utc),
+                    entry_price=pos.entry_price,
+                    exit_price=1.0,  # Precio de cierre simulado
+                    size=pos.volume,
+                    pnl=0.0,  # PnL simulado
+                    stop_loss=pos.stop_loss,
+                    take_profit=pos.take_profit
+                )
+                self.closed_trades.append(trade_record)
+                
+                logger.info("Posición simulada cerrada: %s (Magic: %s, Strategy: %s)", 
+                           pos.symbol, pos.magic_number, pos.strategy_name)
 
-        return OrderResult(success=True, order_id=len(self.orders_sent))
+        return OrderResult(success=True, order_id=order_id)
 
     def get_open_positions(self):
-        return []
+        """Devuelve las posiciones abiertas simuladas."""
+        return self.open_positions.copy()
 
     def get_closed_trades(self):
-        return []
+        """Devuelve los trades cerrados simulados."""
+        return self.closed_trades.copy()
 
 
 def main() -> None:

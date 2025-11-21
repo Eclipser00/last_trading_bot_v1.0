@@ -46,11 +46,13 @@ class RiskLimits:
         dd_global: Drawdown máximo permitido a nivel global (%).
         dd_por_activo: Límite de drawdown por símbolo.
         dd_por_estrategia: Límite de drawdown por estrategia.
+        initial_balance: Balance inicial de la cuenta para calcular drawdown correctamente.
     """
 
     dd_global: Optional[float] = None
     dd_por_activo: dict[str, float] = field(default_factory=dict)
     dd_por_estrategia: dict[str, float] = field(default_factory=dict)
+    initial_balance: float = 10000.0
 
 
 @dataclass
@@ -65,6 +67,7 @@ class Position:
         take_profit: Take profit asociado.
         strategy_name: Estrategia que abrió la posición.
         open_time: Fecha y hora de apertura.
+        magic_number: Número mágico único para identificar la estrategia de forma robusta.
     """
 
     symbol: str
@@ -74,6 +77,7 @@ class Position:
     take_profit: Optional[float]
     strategy_name: str
     open_time: datetime
+    magic_number: Optional[int] = None
 
 
 @dataclass
@@ -116,6 +120,7 @@ class OrderRequest:
         stop_loss: Nivel de stop loss.
         take_profit: Nivel de take profit.
         comment: Comentario opcional para trazabilidad.
+        magic_number: Número mágico para identificar la estrategia en el broker.
     """
 
     symbol: str
@@ -124,6 +129,7 @@ class OrderRequest:
     stop_loss: Optional[float] = None
     take_profit: Optional[float] = None
     comment: str | None = None
+    magic_number: Optional[int] = None
 
 
 @dataclass

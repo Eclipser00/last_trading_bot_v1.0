@@ -13,6 +13,9 @@ class FakeBroker:
         self.last_order = order_request
         return OrderResult(success=True, order_id=1)
 
+    def get_open_positions(self):
+        return []
+
 
 def test_order_executor_envia_orden_y_interpreta_respuesta() -> None:
     """El ejecutor debe enviar la orden y retornar el resultado del broker."""

@@ -22,6 +22,9 @@ class RiskManager:
     def _calculate_drawdown(self, trades: list[TradeRecord]) -> float:
         """Calcula el drawdown real como porcentaje desde el máximo histórico.
         
+        Usa el balance inicial configurado para calcular correctamente el drawdown
+        incluso cuando la estrategia comienza con pérdidas.
+        
         Args:
             trades: Lista de trades cerrados ordenados cronológicamente.
             
@@ -31,9 +34,10 @@ class RiskManager:
         if not trades:
             return 0.0
         
-        # Calcular equity acumulada
-        equity = 0.0
-        max_equity = 0.0
+        # Usar balance inicial de la configuración
+        initial_balance = self.risk_limits.initial_balance
+        equity = initial_balance
+        max_equity = initial_balance
         max_drawdown = 0.0
         
         for trade in trades:
@@ -41,11 +45,10 @@ class RiskManager:
             if equity > max_equity:
                 max_equity = equity
             
-            # Calcular drawdown actual
-            if max_equity > 0:
-                current_dd = ((max_equity - equity) / max_equity) * 100
-                if current_dd > max_drawdown:
-                    max_drawdown = current_dd
+            # Calcular drawdown actual (max_equity siempre > 0 con balance inicial)
+            current_dd = ((max_equity - equity) / max_equity) * 100
+            if current_dd > max_drawdown:
+                max_drawdown = current_dd
         
         logger.debug("Drawdown calculado: %.2f%% (Equity: %.2f, Max: %.2f)", 
                      max_drawdown, equity, max_equity)

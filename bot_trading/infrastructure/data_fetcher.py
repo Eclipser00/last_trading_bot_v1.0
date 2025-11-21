@@ -74,9 +74,9 @@ class MarketDataService:
                 raise ValueError(f"Timeframe solicitado no soportado: {tf}")
             # Validar que el timeframe solicitado sea >= al timeframe base
             if not self._is_timeframe_compatible(symbol.min_timeframe, tf):
-                logger.warning(
-                    "Timeframe %s no es compatible con timeframe base %s",
-                    tf, symbol.min_timeframe
+                raise ValueError(
+                    f"Timeframe {tf} no es compatible con timeframe base {symbol.min_timeframe}. "
+                    f"No se puede resamplear a un timeframe menor que el disponible."
                 )
 
         try:

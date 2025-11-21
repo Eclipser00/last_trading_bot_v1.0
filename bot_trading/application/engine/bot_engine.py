@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from bot_trading.application.engine.order_executor import OrderExecutor
 from bot_trading.application.engine.signals import SignalType
 from bot_trading.application.risk_management import RiskManager
+from bot_trading.application.strategy_registry import StrategyRegistry
 from bot_trading.application.strategies.base import Strategy
 from bot_trading.domain.entities import OrderRequest, SymbolConfig, TradeRecord
 from bot_trading.infrastructure.data_fetcher import MarketDataService
@@ -25,12 +26,22 @@ class TradingBot:
     order_executor: OrderExecutor
     strategies: list[Strategy]
     symbols: list[SymbolConfig]
-    trade_history: list = field(default_factory=list)
+    trade_history: list[TradeRecord] = field(default_factory=list)
+    strategy_registry: StrategyRegistry = field(default_factory=StrategyRegistry)
+    
+    def __post_init__(self) -> None:
+        """Inicializa el registro de estrategias después de la construcción."""
+        # Registrar todas las estrategias al iniciar
+        for strategy in self.strategies:
+            self.strategy_registry.register_strategy(strategy.name)
 
     def run_once(self, now: datetime | None = None) -> None:
         """Ejecuta un ciclo completo del bot una sola vez."""
         current_time = now or datetime.now(timezone.utc)
         logger.info("Iniciando ciclo del bot en %s", current_time)
+        
+        # Sincronizar estado de órdenes abiertas con el broker
+        self.order_executor.sync_state()
         
         # Actualizar trade_history con trades cerrados del broker
         self._update_trade_history()
@@ -78,10 +89,24 @@ class TradingBot:
                     len(signals),
                     symbol.name,
                 )
+                
+                # Obtener Magic Number de la estrategia (debe estar registrada)
+                magic_number = self.strategy_registry.get_magic_number(strategy.name)
+                if magic_number is None:
+                    logger.error(
+                        "Estrategia %s no tiene Magic Number asignado. Registrándola ahora.",
+                        strategy.name
+                    )
+                    magic_number = self.strategy_registry.register_strategy(strategy.name)
+                
                 for signal in signals:
                     if signal.signal_type in {SignalType.BUY, SignalType.SELL}:
                         # Verificar si ya existe una posición abierta
-                        if self.order_executor.has_open_position(signal.symbol, strategy.name):
+                        if self.order_executor.has_open_position(
+                            signal.symbol, 
+                            strategy.name,
+                            magic_number
+                        ):
                             logger.debug(
                                 "Orden %s ignorada: ya existe posición abierta para %s con estrategia %s",
                                 signal.signal_type.value,
@@ -97,11 +122,24 @@ class TradingBot:
                             stop_loss=signal.stop_loss,
                             take_profit=signal.take_profit,
                             comment=f"{signal.strategy_name}-{signal.timeframe}",
+                            magic_number=magic_number,
                         )
                         result = self.order_executor.execute_order(order_request)
                         if result.success:
                             logger.info("Orden ejecutada exitosamente: %s", result.order_id)
                     elif signal.signal_type == SignalType.CLOSE:
+                        # Verificar existencia antes de intentar cerrar
+                        if not self.order_executor.has_open_position(
+                            signal.symbol, 
+                            strategy.name,
+                            magic_number
+                        ):
+                            logger.debug(
+                                "Señal CLOSE ignorada: no existe posición abierta para %s", 
+                                signal.symbol
+                            )
+                            continue
+
                         order_request = OrderRequest(
                             symbol=signal.symbol,
                             volume=signal.size,
@@ -109,6 +147,7 @@ class TradingBot:
                             stop_loss=signal.stop_loss,
                             take_profit=signal.take_profit,
                             comment=f"{signal.strategy_name}-{signal.timeframe}",
+                            magic_number=magic_number,
                         )
                         self.order_executor.execute_order(order_request)
                     else:
@@ -127,13 +166,22 @@ class TradingBot:
             time.sleep(sleep_seconds)
 
     def _update_trade_history(self) -> None:
-        """Actualiza el historial de trades con los cerrados del broker."""
+        """Actualiza el historial de trades con los cerrados del broker.
+        
+        Usa una tupla con entry_time, exit_time, symbol y strategy_name para identificar
+        trades únicos de forma más robusta.
+        """
         try:
             closed_trades = self.broker_client.get_closed_trades()
             # Agregar solo los nuevos trades que no estén ya en el historial
-            existing_times = {(t.entry_time, t.exit_time, t.symbol) for t in self.trade_history}
+            # Usar strategy_name en lugar de magic_number ya que TradeRecord no lo tiene
+            existing_trades = {
+                (t.entry_time, t.exit_time, t.symbol, t.strategy_name) 
+                for t in self.trade_history
+            }
             for trade in closed_trades:
-                if (trade.entry_time, trade.exit_time, trade.symbol) not in existing_times:
+                trade_key = (trade.entry_time, trade.exit_time, trade.symbol, trade.strategy_name)
+                if trade_key not in existing_trades:
                     self.trade_history.append(trade)
                     logger.debug("Trade cerrado agregado al historial: %s", trade)
         except NotImplementedError:
