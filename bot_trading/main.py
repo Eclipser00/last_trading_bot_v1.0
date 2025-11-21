@@ -2,9 +2,16 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
 
 import pandas as pd
+
+# Permite ejecutar este archivo directamente (Run File) asegurando que el paquete este en sys.path.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from bot_trading.application.engine.bot_engine import TradingBot
 from bot_trading.application.engine.order_executor import OrderExecutor
@@ -75,7 +82,7 @@ def main() -> None:
         symbols=symbols,
     )
 
-    bot.run_once(now=datetime.utcnow())
+    bot.run_once(now=datetime.now(timezone.utc))
     logger.info("Órdenes enviadas en ejemplo: %d", len(broker.orders_sent))
 
 

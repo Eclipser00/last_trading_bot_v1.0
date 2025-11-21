@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Iterable
 
 from bot_trading.domain.entities import RiskLimits, TradeRecord
 
@@ -20,13 +19,39 @@ class RiskManager:
 
     risk_limits: RiskLimits
 
-    def _calculate_drawdown(self, trades: Iterable[TradeRecord]) -> float:
-        """Calcula un drawdown simplificado basado en pérdidas acumuladas."""
-        total_loss = -sum(min(trade.pnl, 0.0) for trade in trades)
-        logger.debug("Drawdown calculado: %s", total_loss)
-        return total_loss
+    def _calculate_drawdown(self, trades: list[TradeRecord]) -> float:
+        """Calcula el drawdown real como porcentaje desde el máximo histórico.
+        
+        Args:
+            trades: Lista de trades cerrados ordenados cronológicamente.
+            
+        Returns:
+            Drawdown actual en porcentaje (0-100).
+        """
+        if not trades:
+            return 0.0
+        
+        # Calcular equity acumulada
+        equity = 0.0
+        max_equity = 0.0
+        max_drawdown = 0.0
+        
+        for trade in trades:
+            equity += trade.pnl
+            if equity > max_equity:
+                max_equity = equity
+            
+            # Calcular drawdown actual
+            if max_equity > 0:
+                current_dd = ((max_equity - equity) / max_equity) * 100
+                if current_dd > max_drawdown:
+                    max_drawdown = current_dd
+        
+        logger.debug("Drawdown calculado: %.2f%% (Equity: %.2f, Max: %.2f)", 
+                     max_drawdown, equity, max_equity)
+        return max_drawdown
 
-    def check_bot_risk_limits(self, trades: Iterable[TradeRecord]) -> bool:
+    def check_bot_risk_limits(self, trades: list[TradeRecord]) -> bool:
         """Valida si el bot puede operar según el drawdown global."""
         if self.risk_limits.dd_global is None:
             return True
@@ -34,14 +59,14 @@ class RiskManager:
         allowed = drawdown <= self.risk_limits.dd_global
         if not allowed:
             logger.warning(
-                "Límite de drawdown global superado: %.2f > %.2f",
+                "Límite de drawdown global superado: %.2f%% > %.2f%%",
                 drawdown,
                 self.risk_limits.dd_global,
             )
         return allowed
 
     def check_symbol_risk_limits(
-        self, symbol: str, trades: Iterable[TradeRecord]
+        self, symbol: str, trades: list[TradeRecord]
     ) -> bool:
         """Valida límites de riesgo por símbolo."""
         limit = self.risk_limits.dd_por_activo.get(symbol)
@@ -52,7 +77,7 @@ class RiskManager:
         allowed = drawdown <= limit
         if not allowed:
             logger.warning(
-                "Límite de drawdown por símbolo %s superado: %.2f > %.2f",
+                "Límite de drawdown por símbolo %s superado: %.2f%% > %.2f%%",
                 symbol,
                 drawdown,
                 limit,
@@ -60,7 +85,7 @@ class RiskManager:
         return allowed
 
     def check_strategy_risk_limits(
-        self, strategy_name: str, trades: Iterable[TradeRecord]
+        self, strategy_name: str, trades: list[TradeRecord]
     ) -> bool:
         """Valida límites de riesgo por estrategia."""
         limit = self.risk_limits.dd_por_estrategia.get(strategy_name)
@@ -71,7 +96,7 @@ class RiskManager:
         allowed = drawdown <= limit
         if not allowed:
             logger.warning(
-                "Límite de drawdown por estrategia %s superado: %.2f > %.2f",
+                "Límite de drawdown por estrategia %s superado: %.2f%% > %.2f%%",
                 strategy_name,
                 drawdown,
                 limit,

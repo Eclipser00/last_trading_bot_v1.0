@@ -30,8 +30,19 @@ class SimpleExampleStrategy:
             return signals
 
         close_series = data["close"]
-        symbol_name = data.attrs.get("symbol", "")
+        symbol_name = data.attrs.get("symbol", "UNKNOWN")
+        
+        # Validar que tenemos un símbolo válido
+        if not symbol_name or symbol_name == "UNKNOWN":
+            logger.warning("Símbolo no disponible en attrs del DataFrame")
+            return signals
+        
         if close_series.iloc[-1] > close_series.iloc[-2]:
+            # Calcular stop loss y take profit básicos
+            current_price = float(close_series.iloc[-1])
+            stop_loss = current_price * 0.99  # 1% abajo
+            take_profit = current_price * 1.02  # 2% arriba
+            
             signals.append(
                 Signal(
                     symbol=symbol_name,
@@ -39,10 +50,11 @@ class SimpleExampleStrategy:
                     timeframe=tf,
                     signal_type=SignalType.BUY,
                     size=0.01,
-                    stop_loss=None,
-                    take_profit=None,
+                    stop_loss=stop_loss,
+                    take_profit=take_profit,
                 )
             )
+            logger.debug("Señal BUY generada para %s en %s", symbol_name, tf)
         else:
             logger.debug("No se genera señal operable en %s", tf)
         return signals

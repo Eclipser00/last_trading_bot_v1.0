@@ -1,0 +1,16 @@
+{
+    "//": "Config to run bot_trading.main as module from project root",
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run trading bot example",
+            "type": "python",
+            "request": "launch",
+            "module": "bot_trading.main",
+            "justMyCode": true,
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe"
+        }
+    ]
+}
