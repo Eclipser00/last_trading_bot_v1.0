@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional
 import pandas as pd
 
 from bot_trading.application.engine.signals import Signal, SignalType
@@ -13,10 +14,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SimpleExampleStrategy:
-    """Plantilla de estrategia basada en un cruce de medias simplificado."""
+    """Plantilla de estrategia basada en un cruce de medias simplificado.
+    
+    Permite filtrar símbolos específicos mediante allowed_symbols.
+    Si allowed_symbols es None, la estrategia opera todos los símbolos disponibles.
+    """
 
     name: str
     timeframes: list[str]
+    allowed_symbols: Optional[list[str]] = None  # Lista de símbolos permitidos (None = todos)
 
     def generate_signals(self, data_by_timeframe: dict[str, pd.DataFrame]) -> list[Signal]:
         """Genera señales dummy para guiar el flujo del bot."""
@@ -36,6 +42,14 @@ class SimpleExampleStrategy:
         if not symbol_name or symbol_name == "UNKNOWN":
             logger.warning("Símbolo no disponible en attrs del DataFrame")
             return signals
+        
+        # Filtrar por símbolos permitidos si está configurado
+        if self.allowed_symbols is not None and symbol_name not in self.allowed_symbols:
+            logger.debug(
+                "Estrategia %s ignora símbolo %s (no está en allowed_symbols: %s)",
+                self.name, symbol_name, self.allowed_symbols
+            )
+            return signals  # Retornar lista vacía si el símbolo no está permitido
         
         if close_series.iloc[-1] > close_series.iloc[-2]:
             # Calcular stop loss y take profit básicos

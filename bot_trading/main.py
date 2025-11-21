@@ -136,17 +136,75 @@ def main() -> None:
     """
     broker = FakeBroker()
     market_data_service = MarketDataService(broker)
-    risk_manager = RiskManager(RiskLimits(dd_global=1000))
+    ############################################################################
+    #
+    #               RIESGO GLOBAL Y POR ACTIVO
+    #
+    ############################################################################
+    risk_manager = RiskManager(
+        RiskLimits(
+            dd_global=30.0,  # Drawdown máximo global del bot (30%)
+            dd_por_activo={
+                "EURUSD": 30.0,
+                "GBPUSD": 30.0,
+                "NVDA": 30.0,
+                "AAPL": 30.0,
+            },  # Drawdown máximo por activo (30%)
+            dd_por_estrategia={
+                "momentum_h1": 30.0,  # Límite para estrategia momentum
+                "trend_following_h4": 30.0,  # Límite para estrategia trend
+            }
+        )
+    )
     order_executor = OrderExecutor(broker)
-    strategy = SimpleExampleStrategy(name="simple", timeframes=["M1"])
-    symbols = [SymbolConfig(name="EURUSD", min_timeframe="M1", lot_size=0.01)]
+
+    # TIMEFRAME_MAP: "M1": "1min", "M5": "5min", "M15": "15min", "H1": "1H", "H4": "4H", "D1": "1D"
+
+    ############################################################################
+    #
+    #            ESTRATEGIAS CON SÍMBOLOS ESPECÍFICOS
+    #
+    ############################################################################
+    # Estrategia Momentum: solo opera EURUSD y GBPUSD
+    strategy_momentum = SimpleExampleStrategy(
+        name="momentum_h1",
+        timeframes=["H1"],
+        allowed_symbols=["EURUSD", "GBPUSD"]  # Solo estos símbolos
+    )
+    
+    # Estrategia Trend: solo opera NVDA y AAPL
+    strategy_trend = SimpleExampleStrategy(
+        name="trend_following_h4",
+        timeframes=["H4"],
+        allowed_symbols=["NVDA", "AAPL"]  # Solo estos símbolos
+    )
+
+    ############################################################################
+    #
+    #             ACTIVOS, TIMEFRAME MINIMO Y LOT SIZE
+    #
+    ############################################################################
+    # Timeframe minimo para empezar a resamplear los datos
+    # Incluir todos los símbolos que las estrategias necesitan
+    symbols = [
+        SymbolConfig(name="EURUSD", min_timeframe="M1", lot_size=0.01),
+        SymbolConfig(name="GBPUSD", min_timeframe="M1", lot_size=0.01),
+        SymbolConfig(name="NVDA", min_timeframe="M1", lot_size=0.01),
+        SymbolConfig(name="AAPL", min_timeframe="M1", lot_size=0.01),
+    ]
 
     bot = TradingBot(
         broker_client=broker,
         market_data_service=market_data_service,
         risk_manager=risk_manager,
         order_executor=order_executor,
-        strategies=[strategy],
+        ######################################################################
+        #           ESTRATEGIAS A EJECUTAR
+        ######################################################################
+        strategies=[
+            strategy_momentum, 
+            strategy_trend
+            ],
         symbols=symbols,
     )
 
