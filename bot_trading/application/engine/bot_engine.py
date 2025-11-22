@@ -55,9 +55,50 @@ class TradingBot:
                 logger.info("Símbolo %s bloqueado por riesgo", symbol.name)
                 continue
 
+            # Calcular timeframes requeridos SOLO para estrategias que operan este símbolo
             required_timeframes = set()
             for strategy in self.strategies:
-                required_timeframes.update(strategy.timeframes)
+                # Verificar si la estrategia puede operar este símbolo
+                # Si allowed_symbols no existe o es None, la estrategia opera todos los símbolos
+                can_operate = True
+                if hasattr(strategy, 'allowed_symbols') and strategy.allowed_symbols is not None:
+                    can_operate = symbol.name in strategy.allowed_symbols
+                
+                if can_operate:
+                    required_timeframes.update(strategy.timeframes)
+            
+            # Si no hay timeframes requeridos para este símbolo, saltar
+            if not required_timeframes:
+                logger.debug("No hay estrategias que operen %s, saltando", symbol.name)
+                continue
+            
+            # Filtrar timeframes incompatibles con el min_timeframe del símbolo
+            # Solo mantener timeframes >= min_timeframe
+            compatible_timeframes = set()
+            tf_order = ["M1", "M5", "M15", "M30", "H1", "H4", "D1"]
+            try:
+                min_tf_idx = tf_order.index(symbol.min_timeframe)
+                for tf in required_timeframes:
+                    if tf in tf_order:
+                        tf_idx = tf_order.index(tf)
+                        if tf_idx >= min_tf_idx:
+                            compatible_timeframes.add(tf)
+                    else:
+                        # Si no está en la lista, incluir por seguridad
+                        compatible_timeframes.add(tf)
+            except ValueError:
+                # Si min_timeframe no está en la lista, usar todos
+                compatible_timeframes = required_timeframes
+            
+            required_timeframes = compatible_timeframes
+            
+            if not required_timeframes:
+                logger.warning(
+                    "No hay timeframes compatibles para %s (min_timeframe=%s). "
+                    "Las estrategias requieren timeframes incompatibles.",
+                    symbol.name, symbol.min_timeframe
+                )
+                continue
             
             # Calcular ventana de datos necesaria basada en estrategias
             data_window = self._calculate_data_window(required_timeframes)
@@ -165,6 +206,114 @@ class TradingBot:
             self.run_once()
             time.sleep(sleep_seconds)
 
+    def run_synchronized(self, timeframe_minutes: int = 1, wait_after_close: int = 5) -> None:
+        """Ejecuta el bot sincronizado con el cierre de velas.
+        
+        Espera hasta que cierre la vela del timeframe especificado, luego espera
+        wait_after_close segundos adicionales antes de ejecutar el ciclo.
+        
+        Esta función es ideal para operar en múltiples timeframes ya que sincroniza
+        con el cierre de velas del timeframe base (típicamente M1).
+        
+        Args:
+            timeframe_minutes: Duración de la vela en minutos (1=M1, 5=M5, 15=M15, 60=H1, etc.).
+            wait_after_close: Segundos a esperar después del cierre de la vela.
+        
+        Ejemplo para M1:
+            - Vela cierra a las 17:21:00
+            - Espera hasta 17:21:05 (5 seg después)
+            - Ejecuta run_once()
+            - Espera hasta 17:22:05 (próxima vela + 5 seg)
+            - Repite
+        
+        Ejemplo para M5:
+            - Vela cierra a las 17:20:00, 17:25:00, 17:30:00...
+            - Espera 5 seg después de cada cierre
+            - Ejecuta run_once()
+        """
+        import time
+        
+        logger.info("="*80)
+        logger.info("Iniciando bucle sincronizado con velas de %d minutos", timeframe_minutes)
+        logger.info("Esperando %d segundos después del cierre de cada vela", wait_after_close)
+        logger.info("Presiona Ctrl+C para detener el bot")
+        logger.info("="*80)
+        
+        while True:
+            try:
+                # Calcular cuánto falta para el próximo cierre de vela
+                now = datetime.now(timezone.utc)
+                
+                # Calcular el próximo cierre según el timeframe
+                if timeframe_minutes == 1:
+                    # Para M1: próximo minuto
+                    next_close = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+                elif timeframe_minutes == 5:
+                    # Para M5: próximo múltiplo de 5 minutos
+                    minutes_to_add = 5 - (now.minute % 5)
+                    if minutes_to_add == 5:
+                        minutes_to_add = 0
+                    next_close = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
+                elif timeframe_minutes == 15:
+                    # Para M15: próximo múltiplo de 15 minutos
+                    minutes_to_add = 15 - (now.minute % 15)
+                    if minutes_to_add == 15:
+                        minutes_to_add = 0
+                    next_close = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
+                elif timeframe_minutes == 30:
+                    # Para M30: próximo múltiplo de 30 minutos
+                    minutes_to_add = 30 - (now.minute % 30)
+                    if minutes_to_add == 30:
+                        minutes_to_add = 0
+                    next_close = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
+                elif timeframe_minutes == 60:
+                    # Para H1: próxima hora
+                    next_close = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                elif timeframe_minutes == 240:
+                    # Para H4: próxima hora múltiplo de 4
+                    hours_to_add = 4 - (now.hour % 4)
+                    if hours_to_add == 4:
+                        hours_to_add = 0
+                    next_close = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=hours_to_add)
+                else:
+                    # Genérico: próximo múltiplo del timeframe
+                    minutes_to_add = timeframe_minutes - (now.minute % timeframe_minutes)
+                    if minutes_to_add == timeframe_minutes:
+                        minutes_to_add = 0
+                    next_close = now.replace(second=0, microsecond=0) + timedelta(minutes=minutes_to_add)
+                
+                # Añadir tiempo de espera después del cierre
+                execution_time = next_close + timedelta(seconds=wait_after_close)
+                
+                # Calcular segundos a esperar
+                wait_seconds = (execution_time - now).total_seconds()
+                
+                if wait_seconds > 0:
+                    logger.info(
+                        "Esperando %.1f segundos hasta %s (cierre de vela + %d seg)",
+                        wait_seconds, execution_time.strftime("%H:%M:%S"), wait_after_close
+                    )
+                    time.sleep(wait_seconds)
+                elif wait_seconds < -1:
+                    # Si ya pasó el tiempo, calcular el siguiente
+                    logger.debug("Tiempo de ejecución ya pasó, calculando siguiente vela...")
+                    continue
+                
+                # Ejecutar ciclo del bot
+                logger.info("-"*80)
+                logger.info("Ejecutando ciclo de trading en %s", datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
+                logger.info("-"*80)
+                self.run_once()
+                
+            except KeyboardInterrupt:
+                logger.info("\n⚠️ Bucle interrumpido por el usuario")
+                break
+            except Exception as e:
+                logger.error("❌ Error en bucle sincronizado: %s", e, exc_info=True)
+                # Esperar un poco antes de reintentar para evitar loops infinitos de errores
+                logger.info("Esperando 10 segundos antes de reintentar...")
+                time.sleep(10)
+
     def _update_trade_history(self) -> None:
         """Actualiza el historial de trades con los cerrados del broker.
         
@@ -193,8 +342,11 @@ class TradingBot:
     def _calculate_data_window(self, timeframes: set[str]) -> timedelta:
         """Calcula la ventana de tiempo necesaria para los timeframes solicitados.
         
-        Asegura que haya suficientes datos para calcular indicadores técnicos.
-        Por ejemplo, para MA(200) en timeframe alto necesitamos 200+ velas.
+        Asegura que haya suficientes datos para calcular indicadores técnicos,
+        pero limitando la ventana para ser compatible con MetaTrader5.
+        
+        MT5 tiene límites en la cantidad de datos históricos que puede descargar
+        en una sola consulta, especialmente para timeframes pequeños.
         
         Args:
             timeframes: Conjunto de timeframes requeridos.
@@ -213,16 +365,38 @@ class TradingBot:
             "D1": 1440,
         }
         
-        # Usar al menos 500 velas del timeframe más alto
-        # (suficiente para MA(200) con margen)
+        # Límites de velas por timeframe (compatibles con MT5)
+        # IMPORTANTE: Estos valores deben considerar que descargamos desde el timeframe
+        # MÍNIMO y lo remuestreamos. Por ello, para timeframes altos usamos ventanas
+        # más cortas para no exceder los límites de MT5 al descargar el timeframe base.
+        max_candles_by_tf = {
+            "M1": 1440,    # 1 día de datos (suficiente para análisis intraday)
+            "M5": 1440,    # 5 días de datos
+            "M15": 1000,   # ~10 días de datos
+            "M30": 720,    # ~15 días de datos
+            "H1": 500,     # ~20 días de datos
+            "H4": 500,     # ~50 días de datos (12000 velas M1 = aprox. 8 días)
+            "D1": 500,     # ~200 días de datos
+        }
+        
+        # Encontrar el timeframe más alto (más lento)
         max_minutes = 1
+        max_tf = "M1"
         for tf in timeframes:
             minutes = tf_minutes.get(tf, 1)
             if minutes > max_minutes:
                 max_minutes = minutes
+                max_tf = tf
         
-        # Ventana = 500 velas del timeframe más alto
-        data_window = timedelta(minutes=max_minutes * 500)
-        logger.debug("Ventana de datos calculada: %s para timeframes %s", 
-                     data_window, timeframes)
+        # Usar el límite de velas apropiado para ese timeframe
+        max_candles = max_candles_by_tf.get(max_tf, 500)
+        
+        # Ventana = número de velas * duración de cada vela
+        data_window = timedelta(minutes=max_minutes * max_candles)
+        
+        logger.debug(
+            "Ventana de datos calculada: %s (%d velas de %s) para timeframes %s",
+            data_window, max_candles, max_tf, timeframes
+        )
+        
         return data_window

@@ -54,8 +54,8 @@ class SimpleExampleStrategy:
         if close_series.iloc[-1] > close_series.iloc[-2]:
             # Calcular stop loss y take profit básicos
             current_price = float(close_series.iloc[-1])
-            stop_loss = current_price * 0.99  # 1% abajo
-            take_profit = current_price * 1.02  # 2% arriba
+            stop_loss = current_price * 0.9975  # 0.25% abajo
+            take_profit = current_price * 1.005  # 0.5% arriba
             
             signals.append(
                 Signal(

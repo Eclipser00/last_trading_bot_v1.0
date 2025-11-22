@@ -19,9 +19,18 @@ from bot_trading.application.risk_management import RiskManager
 from bot_trading.application.strategies.simple_example_strategy import SimpleExampleStrategy
 from bot_trading.domain.entities import RiskLimits, SymbolConfig
 from bot_trading.infrastructure.data_fetcher import MarketDataService
+from bot_trading.infrastructure.mt5_client import MetaTrader5Client, MT5ConnectionError
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
+
+# =============================================================================
+# CONFIGURACIÓN: Cambiar a False para usar el broker simulado
+# =============================================================================
+USE_REAL_BROKER = True  # True = MetaTrader5, False = FakeBroker
 
 
 class FakeBroker:
@@ -129,34 +138,72 @@ class FakeBroker:
 
 
 def main() -> None:
-    """Ejecuta un ejemplo mínimo del bot.
+    """Ejecuta el bot de trading.
 
-    En esta fase inicial se utilizan mocks para demostrar el flujo sin tocar el
-    broker real.
+    Puede usar MetaTrader5 real o un broker simulado según la configuración.
     """
-    broker = FakeBroker()
+    logger.info("="*80)
+    logger.info("Iniciando Bot de Trading")
+    logger.info("="*80)
+    
+    # Seleccionar broker según configuración
+    if USE_REAL_BROKER:
+        logger.info("Modo: PRODUCCIÓN - Usando MetaTrader5 REAL")
+        logger.info("IMPORTANTE: Las órdenes se ejecutarán en la cuenta demo de MT5")
+        
+        try:
+            # Crear cliente de MetaTrader5
+            broker = MetaTrader5Client(max_retries=3, retry_delay=1.0)
+            
+            # Conectar con MT5
+            logger.info("Conectando con MetaTrader5...")
+            broker.connect()
+            logger.info(" Conexión exitosa con MetaTrader5")
+            
+        except MT5ConnectionError as e:
+            logger.error(" Error al conectar con MetaTrader5: %s", e)
+            logger.error("Verifica que:")
+            logger.error("  1. MetaTrader5 esté instalado y corriendo")
+            logger.error("  2. Estés logueado en tu cuenta demo")
+            logger.error("  3. El terminal no esté bloqueado")
+            sys.exit(1)
+        except Exception as e:
+            logger.error(" Error inesperado: %s", e)
+            sys.exit(1)
+    else:
+        logger.info("Modo: SIMULACIÓN - Usando FakeBroker")
+        logger.info("Las órdenes NO se ejecutarán en broker real")
+        broker = FakeBroker()
+        broker.connect()
+    
+    logger.info("-"*80)
+    
+    # Crear servicio de datos de mercado
     market_data_service = MarketDataService(broker)
     ############################################################################
     #
     #               RIESGO GLOBAL Y POR ACTIVO
     #
     ############################################################################
+    logger.info("Configurando gestión de riesgo...")
     risk_manager = RiskManager(
         RiskLimits(
             dd_global=30.0,  # Drawdown máximo global del bot (30%)
             dd_por_activo={
                 "EURUSD": 30.0,
                 "GBPUSD": 30.0,
-                "NVDA": 30.0,
-                "AAPL": 30.0,
+                "USDJPY": 30.0,
             },  # Drawdown máximo por activo (30%)
             dd_por_estrategia={
-                "momentum_h1": 30.0,  # Límite para estrategia momentum
-                "trend_following_h4": 30.0,  # Límite para estrategia trend
+                "momentum_M1": 30.0,  # Límite para estrategia momentum
+                "trend_following_M5": 30.0,  # Límite para estrategia trend
             }
         )
     )
+    logger.info(" Gestión de riesgo configurada")
+    
     order_executor = OrderExecutor(broker)
+    logger.info(" Ejecutor de órdenes configurado")
 
     # TIMEFRAME_MAP: "M1": "1min", "M5": "5min", "M15": "15min", "H1": "1H", "H4": "4H", "D1": "1D"
 
@@ -165,19 +212,24 @@ def main() -> None:
     #            ESTRATEGIAS CON SÍMBOLOS ESPECÍFICOS
     #
     ############################################################################
-    # Estrategia Momentum: solo opera EURUSD y GBPUSD
-    strategy_momentum = SimpleExampleStrategy(
-        name="momentum_h1",
-        timeframes=["H1"],
-        allowed_symbols=["EURUSD", "GBPUSD"]  # Solo estos símbolos
-    )
+    logger.info("Configurando estrategias de trading...")
     
-    # Estrategia Trend: solo opera NVDA y AAPL
-    strategy_trend = SimpleExampleStrategy(
-        name="trend_following_h4",
-        timeframes=["H4"],
-        allowed_symbols=["NVDA", "AAPL"]  # Solo estos símbolos
+    # Estrategia Momentum: opera pares EUR y GBP
+    strategy_momentum = SimpleExampleStrategy(
+        name="momentum_M1",
+        timeframes=["M1"],
+        allowed_symbols=["EURUSD", "GBPUSD"]  # Pares mayores Forex
     )
+    logger.info("  - Estrategia 'momentum_M1' creada (EURUSD, GBPUSD)")
+    
+    # Estrategia Trend: opera pares USD y AUD
+    strategy_trend = SimpleExampleStrategy(
+        name="trend_following_M5",
+        timeframes=["M5"],
+        allowed_symbols=["USDJPY"]  # Pares mayores Forex
+    )
+    logger.info("  - Estrategia 'trend_following_M1' creada (USDJPY)")
+    logger.info(" Estrategias configuradas")
 
     ############################################################################
     #
@@ -186,13 +238,26 @@ def main() -> None:
     ############################################################################
     # Timeframe minimo para empezar a resamplear los datos
     # Incluir todos los símbolos que las estrategias necesitan
+    # NOTA: En MT5 demo, estos símbolos son estándar y deberían estar disponibles
+    logger.info("Configurando símbolos a operar...")
     symbols = [
         SymbolConfig(name="EURUSD", min_timeframe="M1", lot_size=0.01),
         SymbolConfig(name="GBPUSD", min_timeframe="M1", lot_size=0.01),
-        SymbolConfig(name="NVDA", min_timeframe="M1", lot_size=0.01),
-        SymbolConfig(name="AAPL", min_timeframe="M1", lot_size=0.01),
+        SymbolConfig(name="USDJPY", min_timeframe="M5", lot_size=0.01),
     ]
+    logger.info("  - EURUSD: Timeframe mínimo M1, Lot size 0.01")
+    logger.info("  - GBPUSD: Timeframe mínimo M1, Lot size 0.01")
+    logger.info("  - USDJPY: Timeframe mínimo M5, Lot size 0.01")
+    logger.info(" Símbolos configurados")
 
+    ############################################################################
+    #
+    #                      INICIALIZACIÓN DEL BOT
+    #
+    ############################################################################
+    logger.info("-"*80)
+    logger.info("Inicializando bot de trading...")
+    
     bot = TradingBot(
         broker_client=broker,
         market_data_service=market_data_service,
@@ -204,12 +269,81 @@ def main() -> None:
         strategies=[
             strategy_momentum, 
             strategy_trend
-            ],
+        ],
         symbols=symbols,
     )
-
-    bot.run_once(now=datetime.now(timezone.utc))
-    logger.info("Órdenes enviadas en ejemplo: %d", len(broker.orders_sent))
+    logger.info("✅ Bot inicializado correctamente")
+    
+    ############################################################################
+    #
+    #                      EJECUCIÓN DEL BOT
+    #
+    ############################################################################
+    logger.info("="*80)
+    logger.info("Modo de ejecución: BUCLE SINCRONIZADO")
+    logger.info("="*80)
+    logger.info("El bot ejecutará un ciclo cada vez que cierre una vela M1")
+    logger.info("Esperará 5 segundos después del cierre antes de ejecutar")
+    logger.info("Presiona Ctrl+C para detener el bot")
+    logger.info("="*80)
+    
+    try:
+        # Ejecutar bot en bucle sincronizado con cierre de velas M1
+        # timeframe_minutes=1: Sincroniza con velas de 1 minuto (M1)
+        # wait_after_close=5: Espera 5 segundos después del cierre de la vela
+        bot.run_synchronized(timeframe_minutes=1, wait_after_close=5)
+        
+    except KeyboardInterrupt:
+        logger.info("\n⚠️ Ejecución interrumpida por el usuario")
+    except Exception as e:
+        logger.error("❌ Error durante la ejecución del bot: %s", e, exc_info=True)
+        raise
+    finally:
+        # Mostrar estadísticas finales al cerrar
+        logger.info("="*80)
+        logger.info("ESTADÍSTICAS FINALES")
+        logger.info("="*80)
+        
+        if USE_REAL_BROKER:
+            # Obtener posiciones abiertas reales
+            try:
+                positions = broker.get_open_positions()
+                logger.info("📊 Posiciones abiertas: %d", len(positions))
+                for pos in positions:
+                    logger.info("  - %s: %.2f lotes @ %.5f (Strategy: %s, Magic: %s)",
+                               pos.symbol, pos.volume, pos.entry_price,
+                               pos.strategy_name, pos.magic_number)
+                
+                # Obtener trades cerrados
+                trades = broker.get_closed_trades()
+                logger.info("📊 Trades cerrados hoy: %d", len(trades))
+                if trades:
+                    total_pnl = sum(t.pnl for t in trades)
+                    logger.info("💰 PnL total: %.2f", total_pnl)
+                    # Mostrar últimos 5 trades
+                    logger.info("Últimos trades:")
+                    for trade in trades[:5]:
+                        logger.info("  - %s: %.2f lotes, PnL=%.2f, Entrada=%.5f, Salida=%.5f",
+                                   trade.symbol, trade.size, trade.pnl,
+                                   trade.entry_price, trade.exit_price)
+                
+            except Exception as e:
+                logger.error("Error al obtener estadísticas: %s", e)
+        else:
+            # Estadísticas del broker simulado
+            logger.info("📊 Órdenes simuladas enviadas: %d", len(broker.orders_sent))
+            logger.info("📊 Posiciones simuladas abiertas: %d", len(broker.open_positions))
+            logger.info("📊 Trades simulados cerrados: %d", len(broker.closed_trades))
+        
+        # Cerrar conexión con MT5 si es necesario
+        if USE_REAL_BROKER:
+            logger.info("Cerrando conexión con MetaTrader5...")
+            # El destructor del cliente se encarga del cierre
+            logger.info("✅ Conexión cerrada")
+        
+        logger.info("="*80)
+        logger.info("Bot finalizado")
+        logger.info("="*80)
 
 
 if __name__ == "__main__":
